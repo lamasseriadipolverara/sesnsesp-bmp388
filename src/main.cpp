@@ -8,119 +8,91 @@
 // Remove the parts that are not relevant to you, and add your own code
 // for external hardware libraries.
 
-#include "sensesp/sensors/analog_input.h"
-#include "sensesp/sensors/digital_input.h"
-#include "sensesp/sensors/sensor.h"
-#include "sensesp/signalk/signalk_output.h"
-#include "sensesp/system/lambda_consumer.h"
+// Boilerplate #includes:
 #include "sensesp_app_builder.h"
+#include "sensesp/signalk/signalk_output.h"
+
+// Sensor-specific #includes:
+#include <Wire.h>
+#include <SPI.h>
+#include <Adafruit_Sensor.h>
+#include "Adafruit_BMP3XX.h"
+
+#define BMP_SCK 18
+#define BMP_MISO 19
+#define BMP_MOSI 23
+#define BMP_CS 5
+
+#define SEALEVELPRESSURE_HPA (1013.25)
+
+// For RepeatSensor:
+#include "sensesp/sensors/sensor.h"
 
 using namespace sensesp;
 
+// SensESP builds upon the ReactESP framework. Every ReactESP application
+// must instantiate the "app" object.
 reactesp::ReactESP app;
 
-// The setup function performs one-time application initialization.
+// (Specific to the BMP280, and I2C. Replace this with similar code to create an instance
+// of whatever sensor you may be using in your project.)
+// Create an instance of the sensor using its I2C interface.
+Adafruit_BMP3XX bmp;
+
+// (Replace this with whatever function you need to read whatever value you want
+// to read from any other sensor you're using in your project.)
+// Define the function that will be called every time we want
+// an updated temperature value from the sensor. The sensor reads degrees
+// Celsius, but all temps in Signal K are in Kelvin, so add 273.15.
+float read_temp_callback() { return (bmp.temperature + 273.15); }
+float read_press_callback() { return (bmp.pressure); }
+
+// The setup function performs one-time application initialization
 void setup() {
+
+// Some initialization boilerplate when in debug mode
 #ifndef SERIAL_DEBUG_DISABLED
   SetupSerialDebug(115200);
 #endif
 
-  // Construct the global SensESPApp() object
+  // Create the global SensESPApp() object
   SensESPAppBuilder builder;
-  sensesp_app = (&builder)
-                    // Set a custom hostname for the app.
-                    ->set_hostname("my-sensesp-project")
-                    // Optionally, hard-code the WiFi and Signal K server
-                    // settings. This is normally not needed.
-                    //->set_wifi("My WiFi SSID", "my_wifi_password")
-                    //->set_sk_server("192.168.10.3", 80)
-                    ->get_app();
+  sensesp_app = builder.set_hostname("Pressione")
+->set_sk_server("10.10.10.1", 3000)
+->set_wifi("sagittario", "sbr0d3774")
+->get_app();
+  
 
-  // GPIO number to use for the analog input
-  const uint8_t kAnalogInputPin = 36;
-  // Define how often (in milliseconds) new samples are acquired
-  const unsigned int kAnalogInputReadInterval = 500;
-  // Define the produced value at the maximum input voltage (3.3V).
-  // A value of 3.3 gives output equal to the input voltage.
-  const float kAnalogInputScale = 3.3;
+  // (Do whatever is required to "start" your project's sensor here)
+  // Initialize the BMP280 using the default address
+  bmp.begin_I2C();
+  bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
+  bmp.setPressureOversampling(BMP3_OVERSAMPLING_4X);
+  bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
+  bmp.setOutputDataRate(BMP3_ODR_50_HZ);
 
-  // Create a new Analog Input Sensor that reads an analog input pin
-  // periodically.
-  auto* analog_input = new AnalogInput(
-      kAnalogInputPin, kAnalogInputReadInterval, "", kAnalogInputScale);
+  // Read the sensor every 2 seconds
+  unsigned int read_interval = 2000;
 
-  // Add an observer that prints out the current value of the analog input
-  // every time it changes.
-  analog_input->attach([analog_input]() {
-    debugD("Analog input value: %f", analog_input->get());
-  });
+  // Create a RepeatSensor with float output that reads the temperature
+  // using the function defined above.
+  auto* air_press =
+      new RepeatSensor<float>(read_interval, read_press_callback);
 
-  // Set GPIO pin 15 to output and toggle it every 650 ms
+  // Set the Signal K Path for the output
+  const char* sk_path = "environment.outside.pressure";
 
-  const uint8_t kDigitalOutputPin = 15;
-  const unsigned int kDigitalOutputInterval = 650;
-  pinMode(kDigitalOutputPin, OUTPUT);
-  app.onRepeat(kDigitalOutputInterval, [kDigitalOutputPin]() {
-    digitalWrite(kDigitalOutputPin, !digitalRead(kDigitalOutputPin));
-  });
+  // Send the temperature to the Signal K server as a Float
+  air_press->connect_to(new SKOutputFloat(sk_path));
 
-  // Read GPIO 14 every time it changes
-
-  const uint8_t kDigitalInput1Pin = 14;
-  auto* digital_input1 =
-      new DigitalInputChange(kDigitalInput1Pin, INPUT_PULLUP, CHANGE);
-
-  // Connect the digital input to a lambda consumer that prints out the
-  // value every time it changes.
-
-  // Test this yourself by connecting pin 15 to pin 14 with a jumper wire and
-  // see if the value changes!
-
-  digital_input1->connect_to(new LambdaConsumer<bool>(
-      [](bool input) { debugD("Digital input value changed: %d", input); }));
-
-  // Create another digital input, this time with RepeatSensor. This approach
-  // can be used to connect external sensor library to SensESP!
-
-  const uint8_t kDigitalInput2Pin = 13;
-  const unsigned int kDigitalInput2Interval = 1000;
-
-  // Configure the pin. Replace this with your custom library initialization
-  // code!
-  pinMode(kDigitalInput2Pin, INPUT_PULLUP);
-
-  // Define a new RepeatSensor that reads the pin every 100 ms.
-  // Replace the lambda function internals with the input routine of your custom
-  // library.
-
-  // Again, test this yourself by connecting pin 15 to pin 13 with a jumper
-  // wire and see if the value changes!
-
-  auto* digital_input2 = new RepeatSensor<bool>(
-      kDigitalInput2Interval,
-      [kDigitalInput2Pin]() { return digitalRead(kDigitalInput2Pin); });
-
-  // Connect the analog input to Signal K output. This will publish the
-  // analog input value to the Signal K server every time it changes.
-  analog_input->connect_to(new SKOutputFloat(
-      "sensors.analog_input.voltage",         // Signal K path
-      "/sensors/analog_input/voltage",        // configuration path, used in the
-                                              // web UI and for storing the
-                                              // configuration
-      new SKMetadata("V",                     // Define output units
-                     "Analog input voltage")  // Value description
-      ));
-
-  // Connect digital input 2 to Signal K output.
-  digital_input2->connect_to(new SKOutputBool(
-      "sensors.digital_input2.value",          // Signal K path
-      "/sensors/digital_input2/value",         // configuration path
-      new SKMetadata("",                       // No units for boolean values
-                     "Digital input 2 value")  // Value description
-      ));
-
-  // Start networking, SK server connections and other SensESP internals
+  // Start the SensESP application running
   sensesp_app->start();
+
 }
 
-void loop() { app.tick(); }
+// loop simply calls `app.tick()` which will then execute all reactions as needed
+void loop() {
+  bmp.performReading();
+  app.tick();
+  
+}
