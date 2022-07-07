@@ -59,7 +59,7 @@ void setup() {
   SensESPAppBuilder builder;
   sensesp_app = builder.set_hostname("Pressione")
 ->set_sk_server("10.10.10.1", 3000)
-->set_wifi("sagittario", "sbr0d3774")
+->set_wifi("*****", "******")
 ->get_app();
   
 
